@@ -10,21 +10,22 @@ st.title("🎯 RoleCast AI: Job Role Predictor")
 st.markdown("Enter candidate details to predict the most suitable AI job role.")
 st.divider()
 
-# LOAD MODELS
+# LOAD MODEL (FIXED)
 @st.cache_resource
-def load_models():
-    with open('models/rf_model.pkl', 'rb') as f:
-        model = pickle.load(f)
+def load_model():
+    with open('rolecast_rf_model.pkl', 'rb') as f:
+        data = pickle.load(f)
 
-    with open('models/count_vectorizer.pkl', 'rb') as f:
-        vectorizer = pickle.load(f)
+    return (
+        data['model'],
+        data['count_vectorizer'],
+        data['label_encoders'],
+        data['target_le'],
+        data['categorical_cols'],
+        data['numeric_cols']
+    )
 
-    with open('models/target_encoder.pkl', 'rb') as f:
-        target_encoder = pickle.load(f)
-
-    return model, vectorizer, target_encoder
-
-rf_model, count_vectorizer, target_le = load_models()
+rf_model, count_vectorizer, label_encoders, target_le, categorical_cols, numeric_cols = load_model()
 
 # USER INPUT FORM
 with st.form("prediction_form"):
@@ -34,66 +35,55 @@ with st.form("prediction_form"):
     col1, col2 = st.columns(2)
 
     with col1:
-        experience = st.selectbox("Experience Level", ["Entry", "Mid", "Senior"])
-        education = st.selectbox("Education Level", ["Bachelor's", "Master's", "PhD"])
-        industry = st.selectbox("Industry", [
-            "Tech","Finance","Healthcare","Education","Retail","E-commerce",
-            "Defense","Insurance","Automotive","SaaS","Legal","Hedge Fund",
-            "Robotics","Marketing","Media","Manufacturing","Banking",
-            "Logistics","Consulting","Telecom","Academia"
-        ])
+        experience = st.selectbox("Experience Level", label_encoders['experience_level'].classes_)
+        education = st.selectbox("Education Level", label_encoders['education_level'].classes_)
+        industry = st.selectbox("Industry", label_encoders['industry'].classes_)
 
     with col2:
-        employment = st.selectbox("Employment Type", ["Full-time", "Part-time", "Contract", "Remote"])
-        company_size = st.selectbox("Company Size", ["Startup", "Mid-size", "Large"])
-        remote = st.selectbox("Remote Friendly", ["Yes", "No", "Hybrid"])
+        employment = st.selectbox("Employment Type", label_encoders['employment_type'].classes_)
+        company_size = st.selectbox("Company Size", label_encoders['company_size'].classes_)
+        remote = st.selectbox("Remote Friendly", label_encoders['remote_friendly'].classes_)
 
     years_exp = st.number_input("Years of Experience", min_value=0, max_value=50, value=2)
+    salary = st.number_input("Expected Salary (USD)", min_value=0, value=50000)
 
     st.subheader("💻 Technical Skills")
     skills = st.text_area("Skills", "Python, Machine Learning, SQL")
     tools = st.text_area("Tools & Technologies", "TensorFlow, AWS")
+    certs = st.text_area("Certifications", "none")
 
     submit_button = st.form_submit_button("🔮 Predict Job Role")
-
-# ENCODING 
-encoding_maps = {
-    "experience_level": {"Entry": 0, "Mid": 1, "Senior": 2},
-    "education_level": {"Bachelor's": 0, "Master's": 1, "PhD": 2},
-    "employment_type": {"Contract": 0, "Full-time": 1, "Internship": 2, "Remote": 3},
-    "company_size": {"Large": 0, "Mid-size": 1, "Startup": 2},
-    "remote_friendly": {"Hybrid": 0, "No": 1, "Yes": 2}
-}
-
 
 # PREDICTION
 if submit_button:
 
+    # Create dataframe
     user_data = {
-        "experience_level": encoding_maps["experience_level"][experience],
-        "education_level": encoding_maps["education_level"][education],
-        "industry": industry,  # will encode below
-        "employment_type": encoding_maps["employment_type"].get(employment, 0),
-        "company_size": encoding_maps["company_size"][company_size],
-        "remote_friendly": encoding_maps["remote_friendly"][remote],
-        "years_of_experience": years_exp
+        "experience_level": experience,
+        "education_level": education,
+        "industry": industry,
+        "employment_type": employment,
+        "company_size": company_size,
+        "remote_friendly": remote,
+        "years_of_experience": years_exp,
+        "annual_salary_usd": salary
     }
 
     user_df = pd.DataFrame([user_data])
 
-   
-    try:
-        industry_encoded = list(target_le.classes_).index(industry)
-    except:
-        industry_encoded = 0
+    # APPLY SAME LABEL ENCODERS (IMPORTANT)
+    for col in categorical_cols:
+        le = label_encoders[col]
+        user_df[col] = le.transform(user_df[col])
 
-    user_df["industry"] = industry_encoded
-
-    skills_combined = f"{skills} {tools}"
+    # Combine skills
+    skills_combined = f"{skills} {tools} {certs}"
     user_skills_matrix = count_vectorizer.transform([skills_combined])
 
+    # Combine features
     X_user = sp.hstack([sp.csr_matrix(user_df.values), user_skills_matrix])
 
+    # Predict
     probabilities = rf_model.predict_proba(X_user)[0]
     top_3_indices = probabilities.argsort()[-3:][::-1]
 
